@@ -26,6 +26,10 @@ DNSServer dnsServer;
 // Inicjalizacja serwera na porcie 80
 ESP8266WebServer server(80);
 
+//Zmienne do liczenie kiedy odpytac sensor
+unsigned long lastMeasurementTime = 0;
+const unsigned long measurementInterval = 30000;
+
 // Deklaracja obiektu wyświetlacza SSD1306
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
@@ -169,6 +173,9 @@ void setupSCD4x()
   }  
 
   Serial.println("SCD41 sensor initialized and measurement started!");
+
+  // Zapewnienie, że pierwszy pomiar będzie wykonany od razu
+  lastMeasurementTime = millis() - measurementInterval;
 }
 
 void setup() {
@@ -187,6 +194,9 @@ void setup() {
     server.begin();
     Serial.println("HTTP server started.");
   }
+
+  WiFi.setSleepMode(WIFI_MODEM_SLEEP);
+  WiFi.setOutputPower(10);
 }
 
 // Funkcja do rysowania wykresu
@@ -270,14 +280,18 @@ void displaySensorData()
 
 void readSennsor()
 {
-  if (mySensor.readMeasurement()) {
-    currentPpm = mySensor.getCO2();
-    currentTemperature = mySensor.getTemperature();
-    currentHumidity = mySensor.getHumidity();
-
-    addToPpmHistory(currentPpm); // Dodaj bieżący ppm do historii
-
-    displaySensorData();
+  //Sensor odpytuje co measurementInterval milisekund, inaczej sie grzeje
+  if (millis() - lastMeasurementTime >= measurementInterval) {
+    lastMeasurementTime = millis();
+    if (mySensor.readMeasurement()) {
+      currentPpm = mySensor.getCO2();
+      currentTemperature = mySensor.getTemperature();
+      currentHumidity = mySensor.getHumidity();
+  
+      addToPpmHistory(currentPpm); // Dodaj bieżący ppm do historii
+  
+      displaySensorData();
+    }
   }
 }
 
