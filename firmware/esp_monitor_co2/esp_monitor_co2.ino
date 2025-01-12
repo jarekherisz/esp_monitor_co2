@@ -1,42 +1,40 @@
 
 #include <Wire.h>
+#include <math.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "SparkFun_SCD4x_Arduino_Library.h"
+#include <WiFiManager.h>
+#include <DNSServer.h>
+
+
 
 #define SCREEN_WIDTH 128 // Szerokość ekranu OLED w pikselach
 #define SCREEN_HEIGHT 64 // Wysokość ekranu OLED w pikselach
 #define OLED_RESET -1    // Reset pin nie jest używany
 #define OLED_ADDRESS 0x3C // Adres I2C wyświetlacza OLED
 #define BAUD_RATE 9600   // Prędkość transmisji danych przez port szeregowy
-#define HISTORY_AVERAGE_SIZE 10 // Liczba pomiarów do obliczenia średniej na wykres
 
-int ppmHistory[SCREEN_WIDTH * HISTORY_AVERAGE_SIZE] = {0}; // Tablica dla historii pomiarów
+
+int ppmHistory[SCREEN_WIDTH] = {0}; // Tablica dla historii pomiarów
 int historyIndex = 0; // Aktualny indeks w historii
+const byte DNS_PORT = 53;
+
+DNSServer dnsServer;
 
 // Deklaracja obiektu wyświetlacza SSD1306
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 SCD4x mySensor;
 
-void setup() {
-  Serial.begin(BAUD_RATE); // Rozpoczynanie komunikacji szeregowej z prędkością 9600 bps
+void setupDisplay()
+{
   // Inicjalizacja wyświetlacza OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) { // Używanie stałej OLED_ADDRESS
     Serial.println(F("Nie można zainicjować SSD1306"));
     for (;;); // Zatrzymanie działania programu, jeśli nie można zainicjować wyświetlacza
   }
-
-  Wire.begin(D2, D1); // Inicjalizacja I2C z D2 jako SDA i D1 jako SCL
-
-  if (mySensor.begin() == false) {
-    Serial.println("Sensor not detected. Please check wiring. Freezing...");
-    while (1); // Zawieszenie programu, jeśli czujnik nie zostanie wykryty
-  }
-
-  mySensor.startPeriodicMeasurement(); // Rozpoczęcie cyklicznych pomiarów
-  Serial.println("SCD41 sensor initialized and measurement started!");
- 
+  
   display.clearDisplay();
   display.setTextSize(1);      // Ustawienie rozmiaru tekstu
   display.setTextColor(WHITE); // Ustawienie koloru tekstu
@@ -68,6 +66,89 @@ void setup() {
   Serial.println(OLED_ADDRESS);
   Serial.print("BAUD_RATE: ");
   Serial.println(BAUD_RATE);
+
+  delay(1000);
+}
+
+void setupWiFi()
+{
+    WiFiManager wm;
+    bool res = wm.autoConnect("Sensor Co2"); 
+
+    if (!res) {
+        Serial.println("Failed to connect and hit timeout");
+        // Możesz zrestartować ESP, jeśli połączenie nie powiedzie się
+        // ESP.restart();
+    } else {
+        // Informacja o pomyślnym połączeniu z WiFi
+        Serial.println("connected...yeey :)");
+        
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Settings:");
+        
+        // Wyświetlenie szczegółów połączenia
+        Serial.print("IP Address: ");
+        Serial.println(WiFi.localIP()); // Adres IP przydzielony ESP
+        display.print("I: ");
+        display.println(WiFi.localIP());
+        
+
+        Serial.print("Subnet Mask: ");
+        Serial.println(WiFi.subnetMask()); // Maska podsieci
+        display.print("M: ");
+        display.println(WiFi.subnetMask());
+
+        Serial.print("Gateway IP: ");
+        Serial.println(WiFi.gatewayIP()); // Adres IP bramy domyślnej
+        display.print("G: ");
+        display.println(WiFi.gatewayIP());
+
+        Serial.print("DNS Server: ");
+        Serial.println(WiFi.dnsIP()); // Adres IP serwera DNS
+        display.print("D: ");
+        display.println(WiFi.dnsIP());
+
+        display.display();           // Odświeżenie wyświetlacza
+
+        delay(5000);
+    }
+}
+
+void setupSCD4x()
+{
+  Wire.begin(D2, D1); // Inicjalizacja I2C z D2 jako SDA i D1 jako SCL
+
+  if (mySensor.begin() == false) {
+    Serial.println("Sensor not detected. Please check wiring. Freezing...");
+    while (1); // Zawieszenie programu, jeśli czujnik nie zostanie wykryty
+  }
+
+  // Najpierw musimy zatrzymać okresowe pomiary, w przeciwnym razie uruchomienie pomiarów okresowych o niskim zużyciu energii nie powiedzie się
+  if (mySensor.stopPeriodicMeasurement() == true)
+  {
+    Serial.println(F("Okresowe pomiary zostały wyłączone!"));
+  }  
+
+  // Teraz możemy włączyć okresowe pomiary o niskim zużyciu energii
+  if (mySensor.startLowPowerPeriodicMeasurement() == true)
+  {
+    Serial.println(F("Włączono tryb niskiego zużycia energii!"));
+  }  
+
+  Serial.println("SCD41 sensor initialized and measurement started!");
+}
+
+void setup() {
+  Serial.begin(BAUD_RATE); // Rozpoczynanie komunikacji szeregowej z prędkością 9600 bps
+
+
+
+  setupDisplay();
+  setupSCD4x();
+  setupWiFi();
+ 
+
 }
 
 // Funkcja do rysowania wykresu
@@ -76,20 +157,13 @@ void drawPpmGraph() {
   int graphY = SCREEN_HEIGHT - graphHeight; // Pozycja Y wykresu (dolny margines)
 
   // Obliczanie zakresu wartości
-  int maxPpm = 3000; // Maksymalna wartość CO2 do wizualizacji
+  int maxPpm = 2000; // Maksymalna wartość CO2 do wizualizacji
   int minPpm = 400;  // Minimalna wartość CO2 do wizualizacji
 
   for (int i = 0; i < SCREEN_WIDTH; i++) {
-    int sum = 0;
-
-    // Obliczanie średniej dla AVERAGE_SIZE próbek
-    for (int j = 0; j < HISTORY_AVERAGE_SIZE; j++) {
-      sum += ppmHistory[(i * HISTORY_AVERAGE_SIZE + j) % (SCREEN_WIDTH * HISTORY_AVERAGE_SIZE)];
-    }
-    int avgValue = sum / HISTORY_AVERAGE_SIZE;
-
+   
     // Mapowanie wartości ppm na wysokość wykresu
-    int barHeight = map(avgValue, minPpm, maxPpm, 0, graphHeight);
+    int barHeight = map(ppmHistory[i], minPpm, maxPpm, 0, graphHeight);
     barHeight = constrain(barHeight, 0, graphHeight); // Ograniczenie do wysokości wykresu
 
     // Rysowanie słupka dla danego punktu
@@ -99,11 +173,38 @@ void drawPpmGraph() {
 
 // Funkcja do dodawania nowych wartości do historii
 void addToPpmHistory(int ppmValue) {
-  ppmHistory[historyIndex] = ppmValue;
-  historyIndex = (historyIndex + 1) % (SCREEN_WIDTH * HISTORY_AVERAGE_SIZE); // Przesunięcie indeksu z zawijaniem
+  // Sprawdź, czy indeks osiągnął koniec tablicy
+  if (historyIndex < SCREEN_WIDTH) {
+    // Dodaj wartość na obecnym indeksie
+    ppmHistory[historyIndex++] = ppmValue;
+  } else {
+    // Przesunięcie wszystkich elementów o jeden w lewo
+    for (int i = 1; i < SCREEN_WIDTH; i++) {
+      ppmHistory[i - 1] = ppmHistory[i];
+    }
+    // Dodaj nową wartość na końcu tablicy
+    ppmHistory[SCREEN_WIDTH - 1] = ppmValue;
+  }
 }
 
-void loop() {
+
+void loop()
+{
+   if (WiFi.status() == WL_CONNECTED) {
+        loopSennsorMode();
+    } else {
+        loopConfigMode();
+    }
+}
+
+
+void loopConfigMode()
+{
+  
+}
+
+
+void loopSennsorMode() {
   if (mySensor.readMeasurement()) {
     int currentPpm = mySensor.getCO2();
     float  currentTemperature = mySensor.getTemperature();
@@ -146,5 +247,5 @@ void loop() {
     Serial.println("Waiting for new data...");
   }
 
-  delay(5000); // Czekanie 5 sekund przed kolejnym odczytem
+  delay(30000); // Czekanie 30 sekund przed kolejnym odczytem
 }
