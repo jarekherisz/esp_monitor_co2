@@ -29,6 +29,8 @@ ESP8266WebServer server(80);
 // Deklaracja obiektu wyświetlacza SSD1306
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
+WiFiManager wm;
+
 SCD4x mySensor;
 
 int currentPpm = 0;
@@ -80,8 +82,11 @@ void setupDisplay()
 
 void setupWiFi()
 {
-    WiFiManager wm;
-    bool res = wm.autoConnect("Sensor Co2"); 
+
+    String SSID = "Sensor Co2";
+    wm.setConfigPortalBlocking(false);
+    
+    bool res = wm.autoConnect(SSID.c_str());
 
     if (!res) {
         Serial.println("Failed to connect and hit timeout");
@@ -98,7 +103,7 @@ void setupWiFi()
         // Wyświetlenie szczegółów połączenia
         Serial.print("IP Address: ");
         Serial.println(WiFi.localIP()); // Adres IP przydzielony ESP
-        display.print("I: ");
+        display.print("IP: ");
         display.println(WiFi.localIP());
         
 
@@ -121,6 +126,25 @@ void setupWiFi()
 
         delay(5000);
     }
+
+     //Wyswietla informacje o trybie konfiguracji
+     if (WiFi.status() != WL_CONNECTED) {
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        
+        // Wyświetlenie szczegółów połączenia
+        Serial.print("IP Address: ");
+        Serial.println(WiFi.softAPIP()); // Adres IP przydzielony ESP
+        display.print("IP: ");
+        display.println(WiFi.softAPIP());
+
+        display.print("SSID: ");
+        display.println(SSID);
+
+        display.display();           // Odświeżenie wyświetlacza
+
+        delay(5000);
+     }
 }
 
 void setupSCD4x()
@@ -155,11 +179,14 @@ void setup() {
   setupDisplay();
   setupSCD4x();
   setupWiFi();
- 
-  // Ustawienie ścieżki dla URI
-  server.on("/currentData", handleCurrentData);
-  server.begin();
-  Serial.println("HTTP server started.");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    // Ustawienie ścieżki dla URI
+    server.on("/currentData", handleCurrentData);
+    server.on("/factoryReset", handleFactoryReset);
+    server.begin();
+    Serial.println("HTTP server started.");
+  }
 }
 
 // Funkcja do rysowania wykresu
@@ -208,12 +235,6 @@ void loop()
     }
 }
 
-
-void loopConfigMode()
-{
-  
-}
-
 void displaySensorData()
 {
     Serial.println("CO2: " + String(currentPpm) + " ppm");
@@ -247,10 +268,8 @@ void displaySensorData()
     display.display(); // Odświeżenie wyświetlacza
 }
 
-
-void loopSennsorMode() {
-  server.handleClient();
-  
+void readSennsor()
+{
   if (mySensor.readMeasurement()) {
     currentPpm = mySensor.getCO2();
     currentTemperature = mySensor.getTemperature();
@@ -259,9 +278,18 @@ void loopSennsorMode() {
     addToPpmHistory(currentPpm); // Dodaj bieżący ppm do historii
 
     displaySensorData();
-    
   }
-  
+}
+
+void loopConfigMode()
+{
+  readSennsor();
+  wm.process();
+}
+
+void loopSennsorMode() {
+  readSennsor();
+  server.handleClient();
 }
 
 // Funkcja obsługująca żądanie HTTP
@@ -270,4 +298,9 @@ void handleCurrentData() {
                 ", \"Temperature\": " + String(currentTemperature) + 
                 ", \"Humidity\": " + String(currentHumidity) + "}";
   server.send(200, "application/json", json);
+}
+
+void handleFactoryReset() {
+  WiFi.disconnect(true);  // Usuwa dane sieci Wi-Fi, czyści konfigurację
+  ESP.restart();          // Restartuje mikrokontroler
 }
