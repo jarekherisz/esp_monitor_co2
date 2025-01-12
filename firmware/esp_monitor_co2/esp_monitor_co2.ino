@@ -6,6 +6,7 @@
 #include "SparkFun_SCD4x_Arduino_Library.h"
 #include <WiFiManager.h>
 #include <DNSServer.h>
+#include <ESP8266WebServer.h>
 
 
 
@@ -22,10 +23,17 @@ const byte DNS_PORT = 53;
 
 DNSServer dnsServer;
 
+// Inicjalizacja serwera na porcie 80
+ESP8266WebServer server(80);
+
 // Deklaracja obiektu wyświetlacza SSD1306
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 SCD4x mySensor;
+
+int currentPpm = 0;
+float  currentTemperature = 0;
+float  currentHumidity = 0;
 
 void setupDisplay()
 {
@@ -148,7 +156,10 @@ void setup() {
   setupSCD4x();
   setupWiFi();
  
-
+  // Ustawienie ścieżki dla URI
+  server.on("/currentData", handleCurrentData);
+  server.begin();
+  Serial.println("HTTP server started.");
 }
 
 // Funkcja do rysowania wykresu
@@ -203,16 +214,8 @@ void loopConfigMode()
   
 }
 
-
-void loopSennsorMode() {
-  if (mySensor.readMeasurement()) {
-    int currentPpm = mySensor.getCO2();
-    float  currentTemperature = mySensor.getTemperature();
-    float  currentHumidity = mySensor.getHumidity();
-
-    addToPpmHistory(currentPpm); // Dodaj bieżący ppm do historii
-  
-    
+void displaySensorData()
+{
     Serial.println("CO2: " + String(currentPpm) + " ppm");
     Serial.println("temperature: " + String(currentTemperature, 1) + "C");
     Serial.println("humidity: " + String(currentHumidity, 1) + "%");
@@ -238,14 +241,33 @@ void loopSennsorMode() {
     display.setCursor(dataX, 18); // Wyśrodkowanie w pionie
     display.print(dataText);
 
-
     // Rysowanie wykresu
     drawPpmGraph();
 
     display.display(); // Odświeżenie wyświetlacza
-  } else {
-    Serial.println("Waiting for new data...");
-  }
+}
 
-  delay(30000); // Czekanie 30 sekund przed kolejnym odczytem
+
+void loopSennsorMode() {
+  server.handleClient();
+  
+  if (mySensor.readMeasurement()) {
+    currentPpm = mySensor.getCO2();
+    currentTemperature = mySensor.getTemperature();
+    currentHumidity = mySensor.getHumidity();
+
+    addToPpmHistory(currentPpm); // Dodaj bieżący ppm do historii
+
+    displaySensorData();
+    
+  }
+  
+}
+
+// Funkcja obsługująca żądanie HTTP
+void handleCurrentData() {
+  String json = "{\"CO2\": " + String(currentPpm) + 
+                ", \"Temperature\": " + String(currentTemperature) + 
+                ", \"Humidity\": " + String(currentHumidity) + "}";
+  server.send(200, "application/json", json);
 }
