@@ -195,8 +195,6 @@ void setup() {
     Serial.println("HTTP server started.");
   }
 
-  WiFi.setSleepMode(WIFI_MODEM_SLEEP);
-  WiFi.setOutputPower(10);
 }
 
 // Funkcja do rysowania wykresu
